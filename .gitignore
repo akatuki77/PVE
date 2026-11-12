@@ -33,3 +33,11 @@ go.work.sum
 # .vscode/
 
 CLAUDE.md
+roadmap.md
+
+# ビルド結果・依存・キャッシュ・開発用データ
+bin/
+web/dist/
+web/node_modules/
+.cache/
+data/

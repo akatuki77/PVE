@@ -1,0 +1,66 @@
+name: proxconductor
+
+x-go: &go
+  image: golang:1.26-alpine
+  working_dir: /src
+  volumes:
+    - .:/src
+    - gomod:/go/pkg/mod
+    - gocache:/root/.cache/go-build
+  environment:
+    GOTOOLCHAIN: local
+    CGO_ENABLED: "0"
+
+x-node: &node
+  image: node:22-alpine
+  working_dir: /src/web
+  volumes:
+    - .:/src
+    - node_modules:/src/web/node_modules
+
+services:
+  mock:
+    <<: *go
+    command: go run ./mock
+    ports:
+      - "127.0.0.1:8006:8006"
+
+  app:
+    <<: *go
+    command: >
+      sh -c 'mkdir -p web/dist &&
+      ([ -f web/dist/index.html ] || echo "<p>画面は http://localhost:5173 で開いてください</p>" > web/dist/index.html) &&
+      exec go run ./cmd/proxconductor -addr :8080 -db /data/proxconductor.db'
+    volumes:
+      - .:/src
+      - gomod:/go/pkg/mod
+      - gocache:/root/.cache/go-build
+      - dbdata:/data
+    depends_on:
+      - mock
+    ports:
+      - "127.0.0.1:8080:8080"
+
+  web:
+    <<: *node
+    command: sh -c "npm ci && npm run dev -- --host 0.0.0.0"
+    environment:
+      API_TARGET: http://app:8080
+    depends_on:
+      - app
+    ports:
+      - "127.0.0.1:5173:5173"
+
+  go:
+    <<: *go
+    profiles: ["tools"]
+
+  node:
+    <<: *node
+    profiles: ["tools"]
+
+volumes:
+  gomod:
+  gocache:
+  node_modules:
+  dbdata:

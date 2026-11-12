@@ -1,0 +1,35 @@
+# 設定ファイルの例（本番では /etc/proxconductor/config.yaml に置く）
+# APIトークンなどの秘密情報はここに書かず、環境変数で渡す（.env.example を参照）
+# ※ まだアプリはこのファイルを読まない。各機能を作るときに読み込みを追加する
+
+listen: ":8443"
+db_path: /var/lib/proxconductor/proxconductor.db
+
+# true の間は VM を変更せず、「何をするか」だけを記録する
+dry_run: true
+
+# このタグが付いた VM だけを変更・起動の対象にする
+safety_tag: demo
+
+monitor:
+  interval: 15s
+  retention: 24h
+
+autoscale:
+  enabled: false
+  interval: 30s
+  cooldown: 5m
+  window: 2m
+  vms:
+    - vmid: 101
+      cpu: { min: 1, max: 4, up_threshold: 80, down_threshold: 20 }
+      memory: { min_mb: 1024, max_mb: 4096, step_mb: 512, up_threshold: 85, down_threshold: 30 }
+
+ha:
+  enabled: false
+  interval: 15s
+  start_timeout: 3m
+
+tls:
+  cert_file: /etc/proxconductor/tls/cert.pem
+  key_file: /etc/proxconductor/tls/key.pem
