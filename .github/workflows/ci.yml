@@ -1,0 +1,45 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: 画面の依存を入れる
+        working-directory: web
+        run: npm ci
+
+      - name: 画面の型チェック
+        working-directory: web
+        run: npx tsc --noEmit
+
+      - name: 画面のビルド
+        working-directory: web
+        run: npx vite build
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: 整形の確認
+        run: test -z "$(gofmt -l .)"
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: go test
+        run: go test ./...
+
+      - name: Go のビルド
+        run: CGO_ENABLED=0 go build -o bin/ ./cmd/...
