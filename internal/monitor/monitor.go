@@ -20,30 +20,29 @@ type MetricStore interface {
 // 最後に取得した結果。
 type Snapshot struct {
 	VMs       []proxmox.VM
-	UpdatedAt time.Time 
-	Err       string 
+	UpdatedAt time.Time
+	Err       string
 }
 
-//
 type Collector struct {
 	client    proxmox.Client
 	store     MetricStore
 	interval  time.Duration
 	retention time.Duration
 	logger    *slog.Logger
+	onUpdate  func(Snapshot) // 取得のたびに呼ぶ。nil なら呼ばない
 	now       func() time.Time
 
-	mu     sync.RWMutex 
+	mu     sync.RWMutex
 	latest Snapshot
 
-	lastCleanup time.Time 
+	lastCleanup time.Time
 }
 
-// 
-func New(client proxmox.Client, st MetricStore, interval, retention time.Duration, logger *slog.Logger) *Collector {
+func New(client proxmox.Client, st MetricStore, interval, retention time.Duration, logger *slog.Logger, onUpdate func(Snapshot)) *Collector {
 	return &Collector{
 		client: client, store: st, interval: interval, retention: retention,
-		logger: logger, now: time.Now,
+		logger: logger, onUpdate: onUpdate, now: time.Now,
 	}
 }
 
@@ -70,12 +69,14 @@ func (c *Collector) CollectOnce(ctx context.Context) {
 		c.mu.Lock()
 		c.latest.Err = err.Error()
 		c.mu.Unlock()
+		c.notify()
 		return
 	}
 
 	c.mu.Lock()
 	c.latest = Snapshot{VMs: vms, UpdatedAt: now}
 	c.mu.Unlock()
+	c.notify()
 
 	ms := make([]store.Metric, 0, len(vms))
 	for _, vm := range vms {
@@ -99,6 +100,13 @@ func (c *Collector) CollectOnce(ctx context.Context) {
 		} else if n > 0 {
 			c.logger.Info("古い使用量を削除", "count", n)
 		}
+	}
+}
+
+// notify は最新の結果を onUpdate に渡す。
+func (c *Collector) notify() {
+	if c.onUpdate != nil {
+		c.onUpdate(c.Latest())
 	}
 }
 

@@ -80,6 +80,7 @@ func TestRoutes(t *testing.T) {
 				Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
 				DB:     tt.db,
 				VMs:    fakeVMs{snap: tt.snap},
+				Broker: NewBroker(),
 				Static: testFiles,
 			})
 			rec := httptest.NewRecorder()

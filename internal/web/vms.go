@@ -5,6 +5,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/akatuki77/proxconductor/internal/monitor"
 	"github.com/akatuki77/proxconductor/internal/proxmox"
 	"github.com/akatuki77/proxconductor/internal/store"
 )
@@ -16,8 +17,8 @@ type VMsResponse struct {
 	Error     string       `json:"error"`      // 最後の取得のエラー
 }
 
-func (s *Server) handleVMs(w http.ResponseWriter, _ *http.Request) {
-	snap := s.vms.Latest()
+// NewVMsResponse は取得結果を API の応答の形にする。
+func NewVMsResponse(snap monitor.Snapshot) VMsResponse {
 	res := VMsResponse{VMs: snap.VMs, Error: snap.Err}
 	if res.VMs == nil {
 		res.VMs = []proxmox.VM{}
@@ -25,7 +26,11 @@ func (s *Server) handleVMs(w http.ResponseWriter, _ *http.Request) {
 	if !snap.UpdatedAt.IsZero() {
 		res.UpdatedAt = &snap.UpdatedAt
 	}
-	s.writeJSON(w, http.StatusOK, res)
+	return res
+}
+
+func (s *Server) handleVMs(w http.ResponseWriter, _ *http.Request) {
+	s.writeJSON(w, http.StatusOK, NewVMsResponse(s.vms.Latest()))
 }
 
 // MetricPoint はグラフの1点。CPU・Mem は使用率（%）。

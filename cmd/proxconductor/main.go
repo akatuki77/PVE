@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -93,14 +94,21 @@ func run(cfg config, logger *slog.Logger) error {
 	}
 
 	client := proxmox.NewHTTPClient(cfg.pveURL, cfg.pveTokenID, cfg.pveTokenSecret, cfg.pveInsecure)
-	collector := monitor.New(client, st, cfg.interval, cfg.retention, logger)
+	broker := web.NewBroker()
+	collector := monitor.New(client, st, cfg.interval, cfg.retention, logger, func(snap monitor.Snapshot) {
+		if err := broker.Publish("vms", web.NewVMsResponse(snap)); err != nil {
+			logger.Warn("画面への通知に失敗", "err", err)
+		}
+	})
 
 	srv := &http.Server{
 		Addr: cfg.addr,
 		Handler: web.NewServer(web.Options{
-			Logger: logger, DB: st, VMs: collector, Static: static,
+			Logger: logger, DB: st, VMs: collector, Broker: broker, Static: static,
 		}).Handler(),
 		ReadHeaderTimeout: 10 * time.Second,
+		// リクエストの ctx を止める合図とつなげる（SSE の接続も止まるように）
+		BaseContext: func(net.Listener) context.Context { return ctx },
 	}
 
 	var wg sync.WaitGroup

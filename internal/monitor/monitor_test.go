@@ -60,8 +60,16 @@ func TestCollectOnce(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			st := &fakeStore{}
-			c := New(tt.client, st, time.Second, time.Hour, slog.New(slog.NewTextHandler(io.Discard, nil)))
+			var notified []Snapshot
+			c := New(tt.client, st, time.Second, time.Hour, slog.New(slog.NewTextHandler(io.Discard, nil)),
+				func(s Snapshot) { notified = append(notified, s) })
 			c.CollectOnce(context.Background())
+			if len(notified) != 1 {
+				t.Fatalf("知らせの回数 = %d, want 1", len(notified))
+			}
+			if (notified[0].Err != "") != tt.wantErr || len(notified[0].VMs) != tt.wantVMs {
+				t.Errorf("知らせの中身 = %+v", notified[0])
+			}
 
 			got := c.Latest()
 			if len(st.saved) != tt.wantSaved {
@@ -83,7 +91,7 @@ func TestCollectOnce(t *testing.T) {
 func TestErrorKeepsLastVMs(t *testing.T) {
 	st := &fakeStore{}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	c := New(fakeClient{vms: []proxmox.VM{{VMID: 101, Status: "running"}}}, st, time.Second, time.Hour, logger)
+	c := New(fakeClient{vms: []proxmox.VM{{VMID: 101, Status: "running"}}}, st, time.Second, time.Hour, logger, nil)
 	c.CollectOnce(context.Background())
 
 	c.client = fakeClient{err: errors.New("timeout")}

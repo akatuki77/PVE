@@ -4,13 +4,13 @@ import type { MetricPoint, Range } from '../api/types'
 import { gib, pct, time } from '../format'
 
 const ranges: Range[] = ['1h', '6h', '24h']
-const REFRESH_MS = 15_000
 
 interface Props {
   vmid: number
+  updatedAt: string | null // 変わったら読み直す
 }
 
-export default function MetricsTable({ vmid }: Props) {
+export default function MetricsTable({ vmid, updatedAt }: Props) {
   const [range, setRange] = useState<Range>('1h')
   const [points, setPoints] = useState<MetricPoint[]>([])
   const [error, setError] = useState('')
@@ -27,12 +27,10 @@ export default function MetricsTable({ vmid }: Props) {
         })
         .catch((err: unknown) => !cancelled && setError(String(err)))
     load()
-    const timer = setInterval(load, REFRESH_MS)
     return () => {
       cancelled = true
-      clearInterval(timer)
     }
-  }, [vmid, range])
+  }, [vmid, range, updatedAt])
 
   return (
     <section>

@@ -29,6 +29,7 @@ type Options struct {
 	Logger *slog.Logger
 	DB     DB
 	VMs    VMSource
+	Broker *Broker
 	Static fs.FS // nil なら画面は配信しない
 }
 
@@ -37,13 +38,14 @@ type Server struct {
 	logger *slog.Logger
 	db     DB
 	vms    VMSource
+	broker *Broker
 	static fs.FS
 	now    func() time.Time
 }
 
 // NewServer は Server を作る。
 func NewServer(o Options) *Server {
-	return &Server{logger: o.Logger, db: o.DB, vms: o.VMs, static: o.Static, now: time.Now}
+	return &Server{logger: o.Logger, db: o.DB, vms: o.VMs, broker: o.Broker, static: o.Static, now: time.Now}
 }
 
 // Handler はルーティング済みの http.Handler を返す。
@@ -52,6 +54,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/healthz", s.handleHealthz)
 	mux.HandleFunc("GET /api/vms", s.handleVMs)
 	mux.HandleFunc("GET /api/vms/{vmid}/metrics", s.handleMetrics)
+	mux.HandleFunc("GET /api/stream", s.handleStream)
 	if s.static != nil {
 		mux.Handle("GET /", spaHandler(s.static))
 	}
