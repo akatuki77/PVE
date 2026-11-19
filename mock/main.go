@@ -7,6 +7,7 @@ import (
 	"errors"
 	"flag"
 	"log/slog"
+	"math"
 	"net/http"
 	"os"
 	"os/signal"
@@ -27,8 +28,22 @@ type vm struct {
 	Status   string
 	VCPUs    int
 	MemoryMB int
-	CPU      float64
-	MemUsed  int64
+	CPU      float64 // 平均の使用率（0〜1）
+	MemUsed  int64   // 平均の使用量（バイト）
+	Phase    float64 // 揺れのずれ
+}
+
+// usage は時刻に応じて揺れる使用量を返す。
+func (v *vm) usage(now time.Time) (cpu float64, mem int64) {
+	if v.Status != "running" {
+		return 0, 0
+	}
+	t := float64(now.Unix())
+	cpu = v.CPU + 0.15*math.Sin(t/60+v.Phase) + 0.03*math.Sin(t/7+v.Phase)
+	cpu = math.Max(0.01, math.Min(1, cpu))
+	memRatio := 1 + 0.08*math.Sin(t/180+v.Phase)
+	mem = min(int64(float64(v.MemUsed)*memRatio), int64(v.MemoryMB)*mib)
+	return cpu, mem
 }
 
 type cluster struct {
@@ -38,9 +53,9 @@ type cluster struct {
 
 func newCluster() *cluster {
 	return &cluster{vms: []*vm{
-		{VMID: 101, Name: "db", Node: "pve1", Tags: "demo", Status: "running", VCPUs: 2, MemoryMB: 2048, CPU: 0.25, MemUsed: 1100 * mib},
-		{VMID: 102, Name: "app", Node: "pve2", Tags: "demo", Status: "running", VCPUs: 2, MemoryMB: 2048, CPU: 0.40, MemUsed: 900 * mib},
-		{VMID: 103, Name: "web", Node: "pve3", Tags: "demo", Status: "running", VCPUs: 1, MemoryMB: 1024, CPU: 0.15, MemUsed: 400 * mib},
+		{VMID: 101, Name: "db", Node: "pve1", Tags: "demo", Status: "running", VCPUs: 2, MemoryMB: 2048, CPU: 0.25, MemUsed: 1100 * mib, Phase: 0},
+		{VMID: 102, Name: "app", Node: "pve2", Tags: "demo", Status: "running", VCPUs: 2, MemoryMB: 2048, CPU: 0.40, MemUsed: 900 * mib, Phase: 2},
+		{VMID: 103, Name: "web", Node: "pve3", Tags: "demo", Status: "running", VCPUs: 1, MemoryMB: 1024, CPU: 0.15, MemUsed: 400 * mib, Phase: 4},
 	}}
 }
 
@@ -100,12 +115,14 @@ func (c *cluster) handleResources(w http.ResponseWriter, r *http.Request) {
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	now := time.Now()
 	list := make([]map[string]any, 0, len(c.vms))
 	for _, v := range c.vms {
+		cpu, mem := v.usage(now)
 		list = append(list, map[string]any{
 			"id": "qemu/" + strconv.Itoa(v.VMID), "type": "qemu", "vmid": v.VMID, "name": v.Name,
 			"node": v.Node, "status": v.Status, "tags": v.Tags, "template": 0,
-			"cpu": v.CPU, "maxcpu": v.VCPUs, "mem": v.MemUsed, "maxmem": int64(v.MemoryMB) * mib,
+			"cpu": cpu, "maxcpu": v.VCPUs, "mem": mem, "maxmem": int64(v.MemoryMB) * mib,
 		})
 	}
 	writeData(w, list)
@@ -120,8 +137,9 @@ func (c *cluster) handleStatus(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Configuration file does not exist", http.StatusInternalServerError)
 		return
 	}
+	cpu, mem := v.usage(time.Now())
 	writeData(w, map[string]any{
-		"vmid": v.VMID, "name": v.Name, "status": v.Status, "cpus": v.VCPUs, "cpu": v.CPU,
-		"mem": v.MemUsed, "maxmem": int64(v.MemoryMB) * mib, "tags": v.Tags,
+		"vmid": v.VMID, "name": v.Name, "status": v.Status, "cpus": v.VCPUs, "cpu": cpu,
+		"mem": mem, "maxmem": int64(v.MemoryMB) * mib, "tags": v.Tags,
 	})
 }

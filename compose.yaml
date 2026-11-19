@@ -30,7 +30,14 @@ services:
     command: >
       sh -c 'mkdir -p web/dist &&
       ([ -f web/dist/index.html ] || echo "<p>画面は http://localhost:5173 で開いてください</p>" > web/dist/index.html) &&
-      exec go run ./cmd/proxconductor -addr :8080 -db /data/proxconductor.db'
+      exec go run ./cmd/proxconductor -addr :8080 -db /data/proxconductor.db -interval 10s -debug'
+    environment:
+      GOTOOLCHAIN: local
+      CGO_ENABLED: "0"
+      PVE_API_URL: ${PVE_API_URL:-http://mock:8006}
+      PVE_TOKEN_ID: ${PVE_TOKEN_ID:-mock@pve!dev}
+      PVE_TOKEN_SECRET: ${PVE_TOKEN_SECRET:-mock}
+      PVE_TLS_INSECURE: ${PVE_TLS_INSECURE:-false}
     volumes:
       - .:/src
       - gomod:/go/pkg/mod

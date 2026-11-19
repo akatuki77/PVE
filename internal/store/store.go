@@ -42,6 +42,10 @@ func Open(ctx context.Context, path string) (*Store, error) {
 		db.Close()
 		return nil, fmt.Errorf("WALモードにできません（journal_mode=%s）", mode)
 	}
+	if _, err := db.ExecContext(ctx, schema); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("テーブルの作成に失敗: %w", err)
+	}
 	return &Store{db: db}, nil
 }
 
