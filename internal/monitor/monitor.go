@@ -24,8 +24,15 @@ type Snapshot struct {
 	Err       string
 }
 
+// VMReader は VM の一覧と、1台ごとの状態・設定を読む。
+type VMReader interface {
+	ListVMs(ctx context.Context) ([]proxmox.VM, error)
+	GetVMStatus(ctx context.Context, node string, vmid int) (proxmox.VMStatus, error)
+	GetVMConfig(ctx context.Context, node string, vmid int) (proxmox.VMConfig, error)
+}
+
 type Collector struct {
-	client    proxmox.Client
+	client    VMReader
 	store     MetricStore
 	interval  time.Duration
 	retention time.Duration
@@ -39,7 +46,7 @@ type Collector struct {
 	lastCleanup time.Time
 }
 
-func New(client proxmox.Client, st MetricStore, interval, retention time.Duration, logger *slog.Logger, onUpdate func(Snapshot)) *Collector {
+func New(client VMReader, st MetricStore, interval, retention time.Duration, logger *slog.Logger, onUpdate func(Snapshot)) *Collector {
 	return &Collector{
 		client: client, store: st, interval: interval, retention: retention,
 		logger: logger, onUpdate: onUpdate, now: time.Now,
@@ -72,6 +79,7 @@ func (c *Collector) CollectOnce(ctx context.Context) {
 		c.notify()
 		return
 	}
+	c.addDetails(ctx, vms)
 
 	c.mu.Lock()
 	c.latest = Snapshot{VMs: vms, UpdatedAt: now}
@@ -84,7 +92,7 @@ func (c *Collector) CollectOnce(ctx context.Context) {
 			continue
 		}
 		ms = append(ms, store.Metric{
-			VMID: vm.VMID, Time: now, CPU: vm.CPU, CPUs: vm.MaxCPU, MemUsed: vm.Mem, MemMax: vm.MaxMem,
+			VMID: vm.VMID, Time: now, CPU: vm.CPU, CPUs: vm.MaxCPU, MemUsed: vm.Mem, MemMax: vm.MemLimit(),
 		})
 	}
 	if err := c.store.SaveMetrics(ctx, ms); err != nil {
@@ -99,6 +107,27 @@ func (c *Collector) CollectOnce(ctx context.Context) {
 			c.logger.Warn("古い使用量の削除に失敗", "err", err)
 		} else if n > 0 {
 			c.logger.Info("古い使用量を削除", "count", n)
+		}
+	}
+}
+
+// addDetails は起動中の VM に、バルーンの値と CPU の上限を入れる。
+func (c *Collector) addDetails(ctx context.Context, vms []proxmox.VM) {
+	for i := range vms {
+		vm := &vms[i]
+		if !vm.Running() {
+			continue
+		}
+		if st, err := c.client.GetVMStatus(ctx, vm.Node, vm.VMID); err != nil {
+			c.logger.Warn("VMの状態の取得に失敗", "vmid", vm.VMID, "err", err)
+		} else {
+			vm.Balloon = st.Balloon
+			vm.SwapOut = st.SwapOut
+		}
+		if cfg, err := c.client.GetVMConfig(ctx, vm.Node, vm.VMID); err != nil {
+			c.logger.Warn("VMの設定の取得に失敗", "vmid", vm.VMID, "err", err)
+		} else {
+			vm.CPULimit = cfg.CPULimit
 		}
 	}
 }

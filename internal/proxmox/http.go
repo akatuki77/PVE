@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 )
@@ -33,30 +34,45 @@ func NewHTTPClient(apiURL, tokenID, tokenSecret string, insecure bool) *HTTPClie
 }
 
 func (c *HTTPClient) get(ctx context.Context, path string, out any) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+path, nil)
+	return c.do(ctx, http.MethodGet, path, nil, out)
+}
+
+// do は API を呼び、応答の data を out に読む。form が nil でなければ本文として送る。
+func (c *HTTPClient) do(ctx context.Context, method, path string, form url.Values, out any) error {
+	var body io.Reader
+	if form != nil {
+		body = strings.NewReader(form.Encode())
+	}
+	req, err := http.NewRequestWithContext(ctx, method, c.baseURL+path, body)
 	if err != nil {
 		return fmt.Errorf("リクエストの作成に失敗: %w", err)
 	}
 	req.Header.Set("Authorization", c.auth)
+	if form != nil {
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	}
 
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return fmt.Errorf("GET %s に失敗: %w", path, err)
+		return fmt.Errorf("%s %s に失敗: %w", method, path, err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		msg, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		return fmt.Errorf("GET %s が失敗: %s %s", path, resp.Status, strings.TrimSpace(string(msg)))
+		return fmt.Errorf("%s %s が失敗: %s %s", method, path, resp.Status, strings.TrimSpace(string(msg)))
+	}
+	if out == nil {
+		return nil
 	}
 	var envelope struct {
 		Data json.RawMessage `json:"data"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&envelope); err != nil {
-		return fmt.Errorf("GET %s の応答の解析に失敗: %w", path, err)
+		return fmt.Errorf("%s %s の応答の解析に失敗: %w", method, path, err)
 	}
 	if err := json.Unmarshal(envelope.Data, out); err != nil {
-		return fmt.Errorf("GET %s のデータの解析に失敗: %w", path, err)
+		return fmt.Errorf("%s %s のデータの解析に失敗: %w", method, path, err)
 	}
 	return nil
 }

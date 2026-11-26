@@ -19,6 +19,14 @@ type fakeClient struct {
 
 func (f fakeClient) ListVMs(context.Context) ([]proxmox.VM, error) { return f.vms, f.err }
 
+func (f fakeClient) GetVMStatus(context.Context, string, int) (proxmox.VMStatus, error) {
+	return proxmox.VMStatus{Status: "running", MaxMem: 4096, Balloon: 1024}, nil
+}
+
+func (f fakeClient) GetVMConfig(context.Context, string, int) (proxmox.VMConfig, error) {
+	return proxmox.VMConfig{Cores: 4, MemoryMB: 4096, CPULimit: 2}, nil
+}
+
 type fakeStore struct {
 	saved   []store.Metric
 	deleted int
@@ -100,5 +108,35 @@ func TestErrorKeepsLastVMs(t *testing.T) {
 	got := c.Latest()
 	if len(got.VMs) != 1 || got.Err == "" {
 		t.Errorf("前回のVM一覧を残し、エラーも記録するはず: %+v", got)
+	}
+}
+
+func TestDetails(t *testing.T) {
+	st := &fakeStore{}
+	vms := []proxmox.VM{
+		{VMID: 101, Status: "running", MaxCPU: 4, Mem: 512, MaxMem: 4096},
+		{VMID: 102, Status: "stopped", MaxCPU: 4, MaxMem: 4096},
+	}
+	c := New(fakeClient{vms: vms}, st, time.Second, time.Hour, slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
+	c.CollectOnce(context.Background())
+
+	tests := []struct {
+		name      string
+		vm        proxmox.VM
+		wantLimit int64
+		wantCPU   float64
+	}{
+		{"起動中はバルーンと上限が入る", c.Latest().VMs[0], 1024, 2},
+		{"停止中は設定値のまま", c.Latest().VMs[1], 4096, 4},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.vm.MemLimit() != tt.wantLimit || tt.vm.CPULimitCores() != tt.wantCPU {
+				t.Errorf("MemLimit = %d, CPULimitCores = %v", tt.vm.MemLimit(), tt.vm.CPULimitCores())
+			}
+		})
+	}
+	if len(st.saved) != 1 || st.saved[0].MemMax != 1024 {
+		t.Errorf("保存したメモリの分母はバルーンの値のはず: %+v", st.saved)
 	}
 }

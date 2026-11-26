@@ -1,13 +1,14 @@
 import type { VM } from '../api/types'
-import { gib, pct } from '../format'
+import { cpuLimitOf, gib, memLimitOf, pct } from '../format'
 
 interface Props {
   vms: VM[]
   selected: number | null
   onSelect: (vmid: number) => void
+  onToggleAutoscale: (vmid: number, enabled: boolean) => void
 }
 
-export default function VmTable({ vms, selected, onSelect }: Props) {
+export default function VmTable({ vms, selected, onSelect, onToggleAutoscale }: Props) {
   if (vms.length === 0) {
     return <p>VMがありません</p>
   }
@@ -15,6 +16,7 @@ export default function VmTable({ vms, selected, onSelect }: Props) {
     <table>
       <thead>
         <tr>
+          <th>オートスケール</th>
           <th>VMID</th>
           <th>名前</th>
           <th>ノード</th>
@@ -31,15 +33,26 @@ export default function VmTable({ vms, selected, onSelect }: Props) {
             className={vm.vmid === selected ? 'selected' : ''}
             onClick={() => onSelect(vm.vmid)}
           >
+            <td onClick={(e) => e.stopPropagation()}>
+              <label>
+                <input
+                  type="checkbox"
+                  checked={vm.autoscale}
+                  onChange={(e) => onToggleAutoscale(vm.vmid, e.target.checked)}
+                />
+                対象
+              </label>
+              {vm.autoscale_mismatch && <span className="error">（VM名が変わったため停止中）</span>}
+            </td>
             <td>{vm.vmid}</td>
             <td>{vm.name}</td>
             <td>{vm.node}</td>
             <td>{vm.status}</td>
             <td>
-              {pct(vm.cpu * 100)} / {vm.maxcpu} コア
+              {pct(((vm.cpu * vm.maxcpu) / cpuLimitOf(vm)) * 100)}（上限 {cpuLimitOf(vm)} / 全 {vm.maxcpu} コア）
             </td>
             <td>
-              {gib(vm.mem)} / {gib(vm.maxmem)}（{pct(vm.maxmem > 0 ? (vm.mem / vm.maxmem) * 100 : 0)}）
+              {gib(vm.mem)} / {gib(memLimitOf(vm))}（{pct(memLimitOf(vm) > 0 ? (vm.mem / memLimitOf(vm)) * 100 : 0)}、設定 {gib(vm.maxmem)}）
             </td>
             <td>{(vm.tags ?? []).join(', ')}</td>
           </tr>

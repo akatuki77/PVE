@@ -15,6 +15,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/akatuki77/proxconductor/internal/autoscale"
+	"github.com/akatuki77/proxconductor/internal/config"
 	"github.com/akatuki77/proxconductor/internal/monitor"
 	"github.com/akatuki77/proxconductor/internal/proxmox"
 	"github.com/akatuki77/proxconductor/internal/store"
@@ -22,13 +24,15 @@ import (
 	webui "github.com/akatuki77/proxconductor/web"
 )
 
-// config は起動時の設定。
-type config struct {
-	addr      string
-	dbPath    string
-	interval  time.Duration
-	retention time.Duration
-	debug     bool
+// settings は起動時の設定。
+type settings struct {
+	addr           string
+	dbPath         string
+	configPath     string
+	interval       time.Duration
+	retention      time.Duration
+	eventRetention time.Duration
+	debug          bool
 
 	pveURL         string
 	pveTokenID     string
@@ -37,11 +41,13 @@ type config struct {
 }
 
 func main() {
-	var cfg config
+	var cfg settings
 	flag.StringVar(&cfg.addr, "addr", ":8080", "待ち受けるアドレス")
 	flag.StringVar(&cfg.dbPath, "db", "data/proxconductor.db", "SQLite のファイル")
+	flag.StringVar(&cfg.configPath, "config", "", "設定ファイル（YAML）。空なら初期値")
 	flag.DurationVar(&cfg.interval, "interval", 15*time.Second, "使用量を取得する間隔")
 	flag.DurationVar(&cfg.retention, "retention", 24*time.Hour, "使用量を残す期間")
+	flag.DurationVar(&cfg.eventRetention, "event-retention", 7*24*time.Hour, "オートスケールの記録を残す期間")
 	flag.BoolVar(&cfg.debug, "debug", false, "詳しいログを出す")
 	flag.Parse()
 
@@ -61,7 +67,7 @@ func main() {
 	}
 }
 
-func loadEnv(cfg *config) error {
+func loadEnv(cfg *settings) error {
 	cfg.pveURL = os.Getenv("PVE_API_URL")
 	cfg.pveTokenID = os.Getenv("PVE_TOKEN_ID")
 	cfg.pveTokenSecret = os.Getenv("PVE_TOKEN_SECRET")
@@ -78,7 +84,17 @@ func loadEnv(cfg *config) error {
 	return nil
 }
 
-func run(cfg config, logger *slog.Logger) error {
+func run(cfg settings, logger *slog.Logger) error {
+	appCfg, err := config.Load(cfg.configPath)
+	if err != nil {
+		return err
+	}
+	logger.Info("設定を読みました", "file", cfg.configPath, "dry_run", appCfg.DryRun,
+		"autoscale_interval", appCfg.Autoscale.Interval, "cooldown", appCfg.Autoscale.Cooldown)
+	if !appCfg.DryRun {
+		logger.Warn("dry_run: false のため、対象の VM の CPU の上限とメモリを実際に変更します")
+	}
+
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
@@ -94,28 +110,35 @@ func run(cfg config, logger *slog.Logger) error {
 	}
 
 	client := proxmox.NewHTTPClient(cfg.pveURL, cfg.pveTokenID, cfg.pveTokenSecret, cfg.pveInsecure)
-	broker := web.NewBroker()
+	// server と collector はお互いを使うので、server は後から入れる
+	var server *web.Server
 	collector := monitor.New(client, st, cfg.interval, cfg.retention, logger, func(snap monitor.Snapshot) {
-		if err := broker.Publish("vms", web.NewVMsResponse(snap)); err != nil {
-			logger.Warn("画面への通知に失敗", "err", err)
-		}
+		server.PublishVMs(ctx, snap)
+	})
+	server = web.NewServer(web.Options{
+		Logger: logger, DB: st, VMs: collector, Broker: web.NewBroker(), Static: static,
+		EventRetention: cfg.eventRetention,
 	})
 
 	srv := &http.Server{
-		Addr: cfg.addr,
-		Handler: web.NewServer(web.Options{
-			Logger: logger, DB: st, VMs: collector, Broker: broker, Static: static,
-		}).Handler(),
+		Addr:              cfg.addr,
+		Handler:           server.Handler(),
 		ReadHeaderTimeout: 10 * time.Second,
 		// リクエストの ctx を止める合図とつなげる（SSE の接続も止まるように）
 		BaseContext: func(net.Listener) context.Context { return ctx },
 	}
 
+	scaler := autoscale.New(appCfg.Autoscale, appCfg.DryRun, collector, st, client, server, logger)
+
 	var wg sync.WaitGroup
-	wg.Add(1)
+	wg.Add(2)
 	go func() {
 		defer wg.Done()
 		collector.Run(ctx)
+	}()
+	go func() {
+		defer wg.Done()
+		scaler.Run(ctx)
 	}()
 
 	serveErr := make(chan error, 1)

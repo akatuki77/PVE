@@ -30,7 +30,7 @@ services:
     command: >
       sh -c 'mkdir -p web/dist &&
       ([ -f web/dist/index.html ] || echo "<p>画面は http://localhost:5173 で開いてください</p>" > web/dist/index.html) &&
-      exec go run ./cmd/proxconductor -addr :8080 -db /data/proxconductor.db -interval 10s -debug'
+      exec go run ./cmd/proxconductor -addr :8080 -db /data/proxconductor.db -interval 10s -debug -config deploy/config.dev.yaml'
     environment:
       GOTOOLCHAIN: local
       CGO_ENABLED: "0"

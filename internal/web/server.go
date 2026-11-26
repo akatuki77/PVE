@@ -17,6 +17,12 @@ import (
 type DB interface {
 	PingContext(ctx context.Context) error
 	Metrics(ctx context.Context, vmid int, since time.Time) ([]store.Metric, error)
+	Targets(ctx context.Context) ([]store.Target, error)
+	AddTarget(ctx context.Context, vmid int, name string, now time.Time) error
+	RemoveTarget(ctx context.Context, vmid int) error
+	AddEvent(ctx context.Context, e store.Event) (store.Event, error)
+	Events(ctx context.Context, limit int) ([]store.Event, error)
+	DeleteEventsBefore(ctx context.Context, before time.Time) (int64, error)
 }
 
 // VMSource は最新の VM 一覧を返す。
@@ -31,6 +37,8 @@ type Options struct {
 	VMs    VMSource
 	Broker *Broker
 	Static fs.FS // nil なら画面は配信しない
+
+	EventRetention time.Duration // 記録を残す期間。0 なら消さない
 }
 
 // Server はハンドラが使う依存を持つ。
@@ -41,11 +49,16 @@ type Server struct {
 	broker *Broker
 	static fs.FS
 	now    func() time.Time
+
+	eventRetention time.Duration
 }
 
 // NewServer は Server を作る。
 func NewServer(o Options) *Server {
-	return &Server{logger: o.Logger, db: o.DB, vms: o.VMs, broker: o.Broker, static: o.Static, now: time.Now}
+	return &Server{
+		logger: o.Logger, db: o.DB, vms: o.VMs, broker: o.Broker, static: o.Static, now: time.Now,
+		eventRetention: o.EventRetention,
+	}
 }
 
 // Handler はルーティング済みの http.Handler を返す。
@@ -54,6 +67,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/healthz", s.handleHealthz)
 	mux.HandleFunc("GET /api/vms", s.handleVMs)
 	mux.HandleFunc("GET /api/vms/{vmid}/metrics", s.handleMetrics)
+	mux.HandleFunc("PUT /api/vms/{vmid}/autoscale", s.handleAddTarget)
+	mux.HandleFunc("DELETE /api/vms/{vmid}/autoscale", s.handleRemoveTarget)
+	mux.HandleFunc("GET /api/events", s.handleEvents)
 	mux.HandleFunc("GET /api/stream", s.handleStream)
 	if s.static != nil {
 		mux.Handle("GET /", spaHandler(s.static))

@@ -68,7 +68,12 @@ func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 	defer s.broker.unsubscribe(ch)
 
 	rc := http.NewResponseController(w)
-	first, err := json.Marshal(NewVMsResponse(s.vms.Latest()))
+	res, err := s.vmsResponse(r.Context(), s.vms.Latest())
+	if err != nil {
+		s.logger.Error("VM一覧の作成に失敗", "err", err)
+		return
+	}
+	first, err := json.Marshal(res)
 	if err != nil {
 		s.logger.Error("通知のJSON化に失敗", "err", err)
 		return
